@@ -126,19 +126,25 @@ class ARC:
                 
                 p_map = {}
                 for hmap, preds in global_hmap_preds:  # type: ignore
-                    for h, q in preds.get(name, {}).get(input_hash, {}):
-                        p_map.setdefault(h, [0, 0])
-                        p_map[h][0] += 1
-                        p_map[h][1] += q
+                    for h, q in preds.get(name, {}).get(input_hash, []):
+                        if h not in p_map:
+                            p_map[h] = {"count": 0, "avg_q": 0.0}
+
+                        p_map[h]["count"] += 1
+                        p_map[h]["avg_q"] += q
                         
                 if not len(p_map):
                     print (f"Puzzle {name} has no predictions.")
                     continue
 
                 for h, stats in p_map.items():
-                    stats[1] /= stats[0]
-                    
-                p_map = sorted(p_map.items(), key=lambda kv: kv[1], reverse=True)
+                    stats["avg_q"] /= stats["count"]
+
+                p_map = sorted(
+                    p_map.items(),
+                    key=lambda kv: (kv[1]["avg_q"], kv[1]["count"]),
+                    reverse=True,
+                )
 
                 # vote for different Ks
                 for i, k in enumerate(self.pass_Ks):
