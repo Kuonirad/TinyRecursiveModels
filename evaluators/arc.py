@@ -117,7 +117,7 @@ class ARC:
             # Fallback for single-process evaluation without distributed initialization
             global_hmap_preds = [(self._local_hmap, self._local_preds)]
             actual_rank = 0
-        
+
         # Rank 0 logic
         if actual_rank != 0:
             return
