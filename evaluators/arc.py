@@ -106,11 +106,20 @@ class ARC:
     
     def result(self, save_path: Optional[str], rank: int, world_size: int, group: Optional[torch.distributed.ProcessGroup] = None) -> Optional[Dict[str, float]]:
         # Gather predictions to rank 0 for voting
-        global_hmap_preds = [None for _ in range(world_size)] if rank == 0 else None
-        dist.gather_object((self._local_hmap, self._local_preds), global_hmap_preds, dst=0, group=group)
+        if dist.is_available() and dist.is_initialized():
+            pg = group if group is not None else dist.group.WORLD
+            actual_rank = dist.get_rank(pg)
+            actual_world_size = dist.get_world_size(pg)
+
+            global_hmap_preds = [None for _ in range(actual_world_size)] if actual_rank == 0 else None
+            dist.gather_object((self._local_hmap, self._local_preds), global_hmap_preds, dst=0, group=pg)
+        else:
+            # Fallback for single-process evaluation without distributed initialization
+            global_hmap_preds = [(self._local_hmap, self._local_preds)]
+            actual_rank = 0
         
         # Rank 0 logic
-        if rank != 0:
+        if actual_rank != 0:
             return
 
         submission = {}
@@ -126,19 +135,25 @@ class ARC:
                 
                 p_map = {}
                 for hmap, preds in global_hmap_preds:  # type: ignore
-                    for h, q in preds.get(name, {}).get(input_hash, {}):
-                        p_map.setdefault(h, [0, 0])
-                        p_map[h][0] += 1
-                        p_map[h][1] += q
+                    for h, q in preds.get(name, {}).get(input_hash, []):
+                        if h not in p_map:
+                            p_map[h] = {"count": 0, "avg_q": 0.0}
+
+                        p_map[h]["count"] += 1
+                        p_map[h]["avg_q"] += q
                         
                 if not len(p_map):
                     print (f"Puzzle {name} has no predictions.")
                     continue
 
                 for h, stats in p_map.items():
-                    stats[1] /= stats[0]
-                    
-                p_map = sorted(p_map.items(), key=lambda kv: kv[1], reverse=True)
+                    stats["avg_q"] /= stats["count"]
+
+                p_map = sorted(
+                    p_map.items(),
+                    key=lambda kv: (kv[1]["avg_q"], kv[1]["count"]),
+                    reverse=True,
+                )
 
                 # vote for different Ks
                 for i, k in enumerate(self.pass_Ks):
